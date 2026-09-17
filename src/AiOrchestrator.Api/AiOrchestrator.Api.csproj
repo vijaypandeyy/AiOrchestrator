@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>AiOrchestrator.Api</RootNamespace>
+    <UserSecretsId>aiorchestrator-api-secrets</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AiOrchestrator.Core\AiOrchestrator.Core.csproj" />
+    <ProjectReference Include="..\AiOrchestrator.Llm.Claude\AiOrchestrator.Llm.Claude.csproj" />
+    <ProjectReference Include="..\AiOrchestrator.Llm.Stub\AiOrchestrator.Llm.Stub.csproj" />
+    <ProjectReference Include="..\AiOrchestrator.Mcp\AiOrchestrator.Mcp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+  </ItemGroup>
+
+</Project>

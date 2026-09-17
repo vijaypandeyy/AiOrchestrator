@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>AiOrchestrator.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      No external NuGet packages are used anywhere in this solution.
+      FrameworkReference pulls in the ASP.NET Core shared framework, which
+      already contains Microsoft.Extensions.DependencyInjection, Logging,
+      Options, Configuration and Http *without* a NuGet restore - these
+      assemblies ship on disk with the .NET SDK/runtime install.
+    -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>
