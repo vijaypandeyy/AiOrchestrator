@@ -50,6 +50,15 @@ public sealed class OrchestrationService : IOrchestrationService
         }
 
         var sessionId = string.IsNullOrWhiteSpace(request.SessionId) ? Guid.NewGuid().ToString("n") : request.SessionId!;
+
+        // Guardrail layer 1: refuse before spending any LLM tokens.
+        var queryRefusal = QueryGuard.CheckQuery(request.Query, _options.Guardrails);
+        if (queryRefusal is not null)
+        {
+            _logger.LogWarning("Session {SessionId}: query rejected by input guardrail", sessionId);
+            return new QueryResponse(queryRefusal, Array.Empty<ToolInvocationTrace>(), 0, sessionId, Refused: true);
+        }
+
         var toolDescriptors = await _toolCatalog.GetToolsAsync(cancellationToken);
         var toolDefinitions = toolDescriptors
             .Select(d => new ToolDefinition(ToolNameCodec.Encode(d.ServerId, d.Name), d.Description, d.InputSchema, d.ServerId))
@@ -72,6 +81,42 @@ public sealed class OrchestrationService : IOrchestrationService
 
             if (response.StopReason != LlmStopReason.ToolUse)
             {
+                // Guardrail layer 2: never hand back an answer that isn't backed by a tool call
+                // (or that contains source code), whatever the model decided to say.
+                var answerRefusal = QueryGuard.CheckAnswer(response.TextOnly, traces.Count, _options.Guardrails);
+                if (answerRefusal is not null)
+                {
+                    _logger.LogWarning(
+                        "Session {SessionId}: model answer withheld by output guardrail (tool calls: {ToolCalls})",
+                        sessionId, traces.Count);
+                    return new QueryResponse(answerRefusal, traces, roundTrips, sessionId, Refused: true);
+                }
+
+                // A non-ToolUse stop is not automatically a *finished* answer: MaxTokens means the
+                // model ran out of output budget mid-sentence, and Other covers vendor stop reasons
+                // this orchestrator does not model. Returning either as though it were complete hides
+                // the problem from the caller.
+                if (response.StopReason == LlmStopReason.MaxTokens)
+                {
+                    _logger.LogWarning(
+                        "Session {SessionId}: the model hit its output-token budget; the answer is truncated", sessionId);
+
+                    return new QueryResponse(
+                        AppendNotice(response.TextOnly, TruncatedAnswerNotice),
+                        traces, roundTrips, sessionId, Refused: false, Truncated: true);
+                }
+
+                if (response.StopReason == LlmStopReason.Other)
+                {
+                    _logger.LogWarning(
+                        "Session {SessionId}: the model stopped for an unmodelled reason; answer may be incomplete", sessionId);
+
+                    if (string.IsNullOrWhiteSpace(response.TextOnly))
+                    {
+                        return new QueryResponse(NoAnswerProducedMessage, traces, roundTrips, sessionId);
+                    }
+                }
+
                 return new QueryResponse(response.TextOnly, traces, roundTrips, sessionId);
             }
 
@@ -84,7 +129,10 @@ public sealed class OrchestrationService : IOrchestrationService
                 stepCounter++;
                 var trace = await InvokeToolAsync(stepCounter, toolUse, cancellationToken);
                 traces.Add(trace);
-                resultBlocks.Add(new ToolResultBlock(toolUse.Id, trace.ResultSummary, trace.IsError));
+
+                // The trace keeps the full result for the caller; the model only ever sees a capped
+                // version of it.
+                resultBlocks.Add(new ToolResultBlock(toolUse.Id, CapForModel(trace.ResultSummary), trace.IsError));
             }
 
             messages.Add(new LlmMessage("user", resultBlocks));
@@ -98,6 +146,36 @@ public sealed class OrchestrationService : IOrchestrationService
             "I gathered information from internal systems but was unable to finish reasoning about it within the " +
             "allotted number of steps. Please rephrase the question or narrow its scope and try again.";
         return new QueryResponse(fallback, traces, roundTrips, sessionId);
+    }
+
+    private const string TruncatedAnswerNotice =
+        "[The answer above was cut off because it reached the model's output limit. Please ask a more " +
+        "specific question, or ask for the missing part.]";
+
+    private const string NoAnswerProducedMessage =
+        "The model stopped without producing an answer. Please try again, or rephrase the question.";
+
+    private static string AppendNotice(string text, string notice) =>
+        string.IsNullOrWhiteSpace(text) ? notice : $"{text.TrimEnd()}\n\n{notice}";
+
+    /// <summary>
+    /// Caps a single tool result at <see cref="OrchestratorOptions.MaxToolResultChars"/> before it
+    /// goes back to the model, marking the cut visibly so the model knows it is looking at a
+    /// fragment rather than silently reasoning over half a record.
+    /// </summary>
+    private string CapForModel(string resultText)
+    {
+        var limit = _options.MaxToolResultChars;
+        if (limit <= 0 || resultText.Length <= limit)
+        {
+            return resultText;
+        }
+
+        var omitted = resultText.Length - limit;
+        _logger.LogWarning(
+            "Tool result truncated for the model: {Kept} of {Total} characters kept", limit, resultText.Length);
+
+        return $"{resultText[..limit]}\n[truncated: {omitted} more character(s) omitted]";
     }
 
     private async Task<ToolInvocationTrace> InvokeToolAsync(int step, ToolUseBlock toolUse, CancellationToken cancellationToken)

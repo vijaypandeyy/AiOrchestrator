@@ -19,4 +19,8 @@ public sealed record QueryResponse(
     string Answer,
     IReadOnlyList<ToolInvocationTrace> ToolInvocations,
     int LlmRoundTrips,
-    string SessionId);
+    string SessionId,
+    bool Refused = false,
+    /// <summary>True when the model hit its output-token budget, so <see cref="Answer"/> is incomplete.
+    /// Callers should not treat a truncated answer as a finished one.</summary>
+    bool Truncated = false);

@@ -87,12 +87,30 @@ public sealed class McpClient : IMcpClient
         var id = Interlocked.Increment(ref _nextRequestId);
         var paramsElement = @params is null ? (JsonElement?)null : JsonSerializer.SerializeToElement(@params, JsonOptions);
         var request = JsonRpcMessage.Request(id, method, paramsElement);
-        var pending = _transport.RegisterPending(id);
+        var idKey = request.IdKey!;
+        var pending = _transport.RegisterPending(idKey);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
         using var registration = timeoutCts.Token.Register(() =>
-            pending.TrySetException(new TimeoutException($"MCP request '{method}' to '{ServerId}' timed out after {timeout.TotalSeconds:0}s.")));
+        {
+            // The linked token fires for two quite different reasons, and reporting the caller's own
+            // cancellation as a timeout is misleading. Complete the task first, then drop the entry
+            // from the transport's pending map: leaving it there leaks, and a late response would log
+            // a spurious "unknown request id" warning. (CancelPending's own TrySetCanceled is a no-op
+            // once the task above has been completed.)
+            if (cancellationToken.IsCancellationRequested)
+            {
+                pending.TrySetCanceled(cancellationToken);
+            }
+            else
+            {
+                pending.TrySetException(
+                    new TimeoutException($"MCP request '{method}' to '{ServerId}' timed out after {timeout.TotalSeconds:0}s."));
+            }
+
+            _transport.CancelPending(idKey);
+        });
 
         try
         {
@@ -100,7 +118,7 @@ public sealed class McpClient : IMcpClient
         }
         catch
         {
-            _transport.CancelPending(id);
+            _transport.CancelPending(idKey);
             throw;
         }
 

@@ -31,6 +31,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AiOrchestrator.Mcp.Protocol
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AiOrchestrator.Llm.Stub", "src\AiOrchestrator.Llm.Stub\AiOrchestrator.Llm.Stub.csproj", "{DD3C59B6-476D-46E2-B8AE-817D3767B2F4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AiOrchestrator.Llm.Ollama", "src\AiOrchestrator.Llm.Ollama\AiOrchestrator.Llm.Ollama.csproj", "{BAD89B39-84FE-4E03-8AB4-75F330C28F37}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -84,6 +86,10 @@ Global
 		{DD3C59B6-476D-46E2-B8AE-817D3767B2F4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{DD3C59B6-476D-46E2-B8AE-817D3767B2F4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{DD3C59B6-476D-46E2-B8AE-817D3767B2F4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BAD89B39-84FE-4E03-8AB4-75F330C28F37}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BAD89B39-84FE-4E03-8AB4-75F330C28F37}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BAD89B39-84FE-4E03-8AB4-75F330C28F37}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BAD89B39-84FE-4E03-8AB4-75F330C28F37}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{FE06FFD4-6931-42E6-B2F8-89682DB946B1} = {99462DC4-83BC-446E-B459-308E82118D73}
@@ -98,5 +104,6 @@ Global
 		{08F86C82-B43D-42F5-8F1D-52CDAEA8943D} = {1593958F-D50D-4AAF-98EC-4BA47A230E5B}
 		{960C946A-DC2F-4D08-95A0-851AF9EF8BFC} = {99462DC4-83BC-446E-B459-308E82118D73}
 		{DD3C59B6-476D-46E2-B8AE-817D3767B2F4} = {99462DC4-83BC-446E-B459-308E82118D73}
+		{BAD89B39-84FE-4E03-8AB4-75F330C28F37} = {99462DC4-83BC-446E-B459-308E82118D73}
 	EndGlobalSection
 EndGlobal

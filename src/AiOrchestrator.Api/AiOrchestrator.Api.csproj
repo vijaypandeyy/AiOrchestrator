@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\AiOrchestrator.Core\AiOrchestrator.Core.csproj" />
     <ProjectReference Include="..\AiOrchestrator.Llm.Claude\AiOrchestrator.Llm.Claude.csproj" />
+    <ProjectReference Include="..\AiOrchestrator.Llm.Ollama\AiOrchestrator.Llm.Ollama.csproj" />
     <ProjectReference Include="..\AiOrchestrator.Llm.Stub\AiOrchestrator.Llm.Stub.csproj" />
     <ProjectReference Include="..\AiOrchestrator.Mcp\AiOrchestrator.Mcp.csproj" />
   </ItemGroup>

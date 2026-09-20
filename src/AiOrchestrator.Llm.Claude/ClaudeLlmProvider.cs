@@ -64,7 +64,20 @@ public sealed class ClaudeLlmProvider : ILlmProvider
         _logger.LogDebug("Sending {MessageCount} message(s) and {ToolCount} tool(s) to Claude model {Model}",
             wireRequest.Messages.Count, wireRequest.Tools?.Count ?? 0, wireRequest.Model);
 
-        using var httpResponse = await _httpClient.SendAsync(httpRequest, cancellationToken);
+        HttpResponseMessage httpResponse;
+        try
+        {
+            httpResponse = await _httpClient.SendAsync(httpRequest, cancellationToken);
+        }
+        catch (HttpRequestException ex)
+        {
+            // An unreachable API is an upstream problem, not a bug in this service; wrapping it
+            // lets the API layer answer 503 instead of a bare 500.
+            _logger.LogError(ex, "Could not reach the Claude API at {BaseUrl}", _httpClient.BaseAddress);
+            throw new ClaudeApiException(null, ex.Message, innerException: ex);
+        }
+
+        using var responseToDispose = httpResponse; // Same lifetime as the original `using var`.
         var body = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
 
         if (!httpResponse.IsSuccessStatusCode)

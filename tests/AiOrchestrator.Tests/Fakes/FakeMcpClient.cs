@@ -13,6 +13,7 @@ public sealed class FakeMcpClient : IMcpClient
     public string ServerName { get; }
     public bool IsHealthy { get; set; } = true;
     public List<(string ToolName, string ArgumentsJson)> Calls { get; } = new();
+    public int ListToolsCallCount { get; private set; }
 
     public FakeMcpClient(
         string serverId,
@@ -28,8 +29,11 @@ public sealed class FakeMcpClient : IMcpClient
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<IReadOnlyList<McpToolDescriptor>> ListToolsAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<McpToolDescriptor>>(_tools);
+    public Task<IReadOnlyList<McpToolDescriptor>> ListToolsAsync(CancellationToken cancellationToken = default)
+    {
+        ListToolsCallCount++;
+        return Task.FromResult<IReadOnlyList<McpToolDescriptor>>(_tools);
+    }
 
     public Task<McpToolCallResult> CallToolAsync(string toolName, string argumentsJson, CancellationToken cancellationToken = default)
     {

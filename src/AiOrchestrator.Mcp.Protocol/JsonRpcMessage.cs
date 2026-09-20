@@ -41,6 +41,16 @@ public sealed class JsonRpcMessage
     [JsonIgnore]
     public bool IsResponse => Method is null && (Result is not null || Error is not null);
 
+    /// <summary>
+    /// The id as a correlation key: its raw JSON text, so the numeric id <c>7</c> and the string id
+    /// <c>"7"</c> stay distinct. JSON-RPC 2.0 allows both, and MCP servers in the wild use string ids,
+    /// so correlation must never assume a number. Null when there is no id, or when it is neither a
+    /// number nor a string (which the spec does not permit and which cannot be correlated).
+    /// </summary>
+    [JsonIgnore]
+    public string? IdKey =>
+        Id is { ValueKind: JsonValueKind.Number or JsonValueKind.String } id ? id.GetRawText() : null;
+
     public static JsonRpcMessage Request(long id, string method, JsonElement? @params) => new()
     {
         Id = JsonSerializer.SerializeToElement(id),

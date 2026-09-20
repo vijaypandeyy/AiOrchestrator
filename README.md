@@ -26,6 +26,8 @@ src/
   AiOrchestrator.Core/            domain models, ILlmProvider / IMcpClient abstractions, the
                                    orchestration loop (OrchestrationService)
   AiOrchestrator.Llm.Claude/      ILlmProvider implementation for Anthropic's Claude API
+  AiOrchestrator.Llm.Ollama/      ILlmProvider implementation for a local Ollama server - the
+                                   automatic fallback when no Anthropic API key is set
   AiOrchestrator.Llm.Stub/        deterministic offline ILlmProvider for local smoke-testing
   AiOrchestrator.Mcp.Protocol/    JSON-RPC 2.0 + MCP wire-format contracts (shared client/server)
   AiOrchestrator.Mcp/             MCP client: stdio transport + process lifecycle management
@@ -105,6 +107,36 @@ timeout, etc.) - the API key itself is never put in a config file, only the *nam
 environment variable that holds it (`Llm:Claude:ApiKeyEnvironmentVariable`, default
 `ANTHROPIC_API_KEY`).
 
+## Automatic fallback to a local Ollama model (no API key, Development only)
+
+If `Llm:Provider` resolves to `Claude` (its default) but `ANTHROPIC_API_KEY` is not set, the API
+does **not** fail every request with HTTP 500 - **in the Development environment** it logs a warning
+at startup and transparently switches to `AiOrchestrator.Llm.Ollama`, which talks to a locally-running
+[Ollama](https://ollama.com) server instead. This gives genuine tool-calling reasoning (unlike the
+keyword-based `Stub` provider) with no API key and no cost:
+
+```bash
+ollama pull llama3.1   # any tool-calling-capable model; see https://ollama.com/search?c=tools
+ollama serve           # if not already running as a background service
+
+cd src/AiOrchestrator.Api
+dotnet run              # no ANTHROPIC_API_KEY set -> auto-falls-back to Ollama
+```
+
+In any other environment the fallback is deliberately **not** applied: a missing key would quietly
+change both the model and where your data goes, so startup fails with a clear message instead. Set
+the key, or choose `Llm__Provider` explicitly.
+
+Configuration lives under `Llm:Ollama` in `appsettings.json` (`BaseUrl`, default
+`http://localhost:11434/`; `Model`, default `llama3.1`; `TimeoutSeconds`, default `120` - local
+inference, especially on CPU or on first load, can be much slower than a hosted API; `NumCtx`, the
+context window, worth raising because Ollama's own default is small enough to truncate the system
+prompt plus the tool catalog; `KeepAlive`, how long Ollama keeps the model loaded between requests).
+Override the model without touching the file via `Llm__Ollama__Model=<name> dotnet run`.
+
+To select Ollama explicitly (instead of relying on the fallback) or to force real Claude even
+without detecting a key at startup, set `Llm__Provider` explicitly: `Ollama`, `Claude`, or `Stub`.
+
 ## Testing
 
 No external test framework is referenced (same no-NuGet constraint as above), so
@@ -129,8 +161,20 @@ directory the DLL lives in. Run `dotnet run` (or `dotnet <path-to-dll>`) from in
 repo root.
 
 **A query against the Claude provider returns HTTP 500 with "Environment variable
-'ANTHROPIC_API_KEY' is not set".** Expected - set the key as shown above, or switch
-`Llm__Provider=Stub` for offline testing.
+'ANTHROPIC_API_KEY' is not set".** This only happens if you forced `Llm__Provider=Claude`
+explicitly without a key - by default, a missing key auto-falls-back to Ollama instead (see
+above). Set the key, drop the explicit override, or switch `Llm__Provider=Stub` for offline
+testing.
+
+**A query against the Ollama provider hangs for a long time, or fails with "The request was
+canceled due to the configured HttpClient.Timeout of 120 seconds elapsing."** Local inference
+speed depends entirely on your hardware and the model size - a large model on a CPU-only machine
+can genuinely take minutes. Pull a smaller tool-calling model (e.g. `llama3.2` or `qwen2.5:7b`),
+run `ollama ps` to confirm the model is loaded, or raise `Llm:Ollama:TimeoutSeconds`.
+
+**A query against the Ollama provider fails with "Could not reach the Ollama server... Is it
+running?".** Start it with `ollama serve` (or check it's already running as a background service),
+and confirm `Llm:Ollama:BaseUrl` matches where it's listening (default `http://localhost:11434/`).
 
 ## Adding a new internal system as an MCP server
 
@@ -147,5 +191,6 @@ repo root.
 ## Adding a new LLM provider
 
 Implement `AiOrchestrator.Core.Abstractions.ILlmProvider` in a new project (mirror
-`AiOrchestrator.Llm.Claude`), then add a `case` for it in the `Llm:Provider` switch in
-`src/AiOrchestrator.Api/Program.cs`. The orchestration loop itself never changes.
+`AiOrchestrator.Llm.Claude` or the more recently added `AiOrchestrator.Llm.Ollama`), then add a
+`case` for it in the `Llm:Provider` switch in `src/AiOrchestrator.Api/Program.cs`. The
+orchestration loop itself never changes.

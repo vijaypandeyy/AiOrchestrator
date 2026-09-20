@@ -22,15 +22,34 @@ public sealed class StdioMcpTransport : IAsyncDisposable
     private readonly Process _process;
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
-    private readonly ConcurrentDictionary<long, TaskCompletionSource<JsonRpcMessage>> _pending = new();
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonRpcMessage>> _pending = new();
     private readonly CancellationTokenSource _lifetimeCts = new();
     private Task? _stdoutLoop;
     private Task? _stderrLoop;
+    private volatile bool _started;
     private volatile bool _faulted;
 
     public string ServerId { get; }
 
-    public bool IsHealthy => !_faulted && !_process.HasExited;
+    /// <summary>
+    /// Never throws, whatever state the child process is in. A server whose executable is missing
+    /// never gets past <see cref="Start"/>, and <see cref="Process.HasExited"/> throws for a
+    /// <see cref="Process"/> that was never successfully started - so callers such as
+    /// <c>ToolCatalog</c> would otherwise see an exception instead of an unhealthy server.
+    /// </summary>
+    public bool IsHealthy => _started && !_faulted && !HasProcessExited();
+
+    private bool HasProcessExited()
+    {
+        try
+        {
+            return _process.HasExited;
+        }
+        catch (InvalidOperationException)
+        {
+            return true; // No process is associated with this object - treat as gone.
+        }
+    }
 
     public StdioMcpTransport(McpServerConfig config, ILogger logger)
     {
@@ -63,10 +82,27 @@ public sealed class StdioMcpTransport : IAsyncDisposable
 
     public void Start()
     {
-        if (!_process.Start())
+        bool started;
+        try
         {
+            started = _process.Start();
+        }
+        catch (Exception ex)
+        {
+            // A missing executable or bad working directory surfaces here (Win32Exception), not as
+            // a false return value, so the flag has to be set on this path too.
+            _faulted = true;
+            throw new InvalidOperationException(
+                $"Failed to start MCP server process for '{ServerId}' (command '{_process.StartInfo.FileName}').", ex);
+        }
+
+        if (!started)
+        {
+            _faulted = true;
             throw new InvalidOperationException($"Failed to start MCP server process for '{ServerId}'.");
         }
+
+        _started = true;
 
         _process.Exited += (_, _) =>
         {
@@ -90,16 +126,21 @@ public sealed class StdioMcpTransport : IAsyncDisposable
         }
     }
 
-    public TaskCompletionSource<JsonRpcMessage> RegisterPending(long id)
+    /// <summary>
+    /// Registers a request awaiting its response, correlated by the id's raw JSON text (e.g. <c>7</c>
+    /// or <c>"abc"</c>) rather than a number: JSON-RPC 2.0 permits string ids, and a server that uses
+    /// them must not be treated as a protocol failure.
+    /// </summary>
+    public TaskCompletionSource<JsonRpcMessage> RegisterPending(string idKey)
     {
         var tcs = new TaskCompletionSource<JsonRpcMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pending[id] = tcs;
+        _pending[idKey] = tcs;
         return tcs;
     }
 
-    public void CancelPending(long id)
+    public void CancelPending(string idKey)
     {
-        if (_pending.TryRemove(id, out var tcs))
+        if (_pending.TryRemove(idKey, out var tcs))
         {
             tcs.TrySetCanceled();
         }
@@ -141,37 +182,16 @@ public sealed class StdioMcpTransport : IAsyncDisposable
                     continue;
                 }
 
-                JsonRpcMessage? message;
+                // Every per-message failure is contained here: one unusable frame is logged and
+                // skipped, and the connection stays usable. Letting it reach the outer catch would
+                // end the read loop and fail every pending (and future) request on this server.
                 try
                 {
-                    message = JsonRpcCodec.TryDecodeLine(line);
+                    DispatchLine(line);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Malformed JSON-RPC line from MCP server '{ServerId}': {Line}", ServerId, line);
-                    continue;
-                }
-
-                if (message is null)
-                {
-                    continue;
-                }
-
-                if (message.IsResponse && message.Id.HasValue)
-                {
-                    var idKey = message.Id.Value.GetInt64();
-                    if (_pending.TryRemove(idKey, out var tcs))
-                    {
-                        tcs.TrySetResult(message);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Received response for unknown/already-completed request id {Id} from '{ServerId}'", idKey, ServerId);
-                    }
-                }
-                else
-                {
-                    _logger.LogDebug("Ignoring unsolicited MCP message from '{ServerId}' (method={Method})", ServerId, message.Method);
+                    _logger.LogWarning(ex, "Skipping unprocessable JSON-RPC line from MCP server '{ServerId}': {Line}", ServerId, line);
                 }
             }
         }
@@ -187,6 +207,48 @@ public sealed class StdioMcpTransport : IAsyncDisposable
         {
             _faulted = true;
             FailAllPending($"MCP server '{ServerId}' connection closed.");
+        }
+    }
+
+    private void DispatchLine(string line)
+    {
+        JsonRpcMessage? message;
+        try
+        {
+            message = JsonRpcCodec.TryDecodeLine(line);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Malformed JSON-RPC line from MCP server '{ServerId}': {Line}", ServerId, line);
+            return;
+        }
+
+        if (message is null)
+        {
+            return;
+        }
+
+        if (!message.IsResponse)
+        {
+            _logger.LogDebug("Ignoring unsolicited MCP message from '{ServerId}' (method={Method})", ServerId, message.Method);
+            return;
+        }
+
+        var idKey = message.IdKey;
+        if (idKey is null)
+        {
+            // A response with a null or non-scalar id cannot be correlated to a request.
+            _logger.LogWarning("Ignoring JSON-RPC response with an uncorrelatable id from '{ServerId}': {Line}", ServerId, line);
+            return;
+        }
+
+        if (_pending.TryRemove(idKey, out var tcs))
+        {
+            tcs.TrySetResult(message);
+        }
+        else
+        {
+            _logger.LogWarning("Received response for unknown/already-completed request id {Id} from '{ServerId}'", idKey, ServerId);
         }
     }
 
